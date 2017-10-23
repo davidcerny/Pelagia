@@ -1,0 +1,249 @@
+---
+title: "Pelagia Analysis"
+author: "David Cerny"
+date: "10/19/2017"
+output: html_document
+---
+
+## MCMCTree Concatenated Analysis
+
+Step 1: delete node numbers from the Bayesian tree, as the tree file used by MCMCTree should contain no information except for topology and calibrations:
+
+```
+gsed -i 's/)[0-9]*:/):/g' ExaML_pelagia-75p-examl.tre
+```
+
+Step 2: delete the branch lengths.
+
+```
+gsed -i 's/:[^:]*,/,/g' ExaML_pelagia-75p-examl.tre
+gsed -i 's/:[^:]*)/)/g' ExaML_pelagia-75p-examl.tre
+```
+
+Step 3: make the phylip alignment file compatible with PAML by ensuring that there are at least two spaces between the name of a taxon and the corresponding sequence:
+
+```
+gsed -i 's/ /  /g' raxml_95_alignments.phylip
+```
+
+Step 4: run a baseml analysis to find appropriate priors to be placed on the `rgene_gamma` and `sigma2_gamma` parameters. The analysis was run under the strict clock model conditioned on the root age, which was set to 113.02 Ma (the mean of the exponential distribution whose offset equals 98 Ma and whose 95th percentile equals 143 Ma):
+
+```{r comment='', echo = FALSE}
+cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_baseml.ctl"), sep = '\n')
+```
+
+## SortaDate
+
+### Individual loci, fully resolved gene trees
+
+Step 1: Convert the alignment files from Nexus to FASTA (Geneious -> Batch export).
+
+Step 2: Generate a script to perform a RAxML analysis with SH-like support values on each of the 615 loci:
+
+```{r, eval = FALSE}
+ucelist <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/ucelist.txt")
+n <- length(unlist(ucelist))
+
+# 1st part of the command: what to analyze
+
+raxmlcommands <- vector(mode="character", length = n)
+for(i in ucelist) {
+  raxmlcommands[i] <- paste("ete3 build -w standard_raxml -n /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/", i, sep = "")
+}
+
+# 2nd part of the command: names to give to the output files
+
+withendings <- as.character(as.vector(as.matrix(ucelist)))
+noendings <- vector()
+for(i in withendings) {
+  noendings <- append(noendings, sapply(strsplit(i, split='.', fixed=TRUE), function(x) (x[1])))
+}
+outputnames <- vector()
+for(i in noendings) {
+  outputnames <- append(outputnames, paste(" -o /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/", i, sep=""))
+}
+
+length(outputnames)
+
+# Put it together and print it to file:
+
+commandlist <- paste(raxmlcommands, outputnames, "-tree &&", sep = "")
+write(commandlist, "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/615-gene-tree-analysis.sh")
+```
+
+Step 3: Run the script as follows:
+
+```
+export PATH=~/anaconda_ete/bin:$PATH
+chmod 755 /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/615-gene-tree-analysis.sh
+/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/615-gene-tree-analysis.sh
+```
+
+Step 4: Move the resulting tree files from their nested subdirectories to the main directory:
+
+```
+find . -name '*.nw' -exec mv {} . \;
+ls -lR ./*.nw | wc -l                     # Make sure you got all 615
+```
+
+Step 5: Rename the trees to give them the `.tre` file ending that SortaDate will be looking for:
+
+```
+find . -name "*.fasta.final_tree.nw" -exec rename 's/.fasta.final_tree.nw$/.tre/' {} \;
+```
+
+Step 6: get_var_length
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-loci --outg ceratoscopelus_warmingii,gadus_morhua
+```
+
+Two different outgroups were selected to increase the probability that at least one of them would be present in each alignment. Note that the script seems to be sensitive to the order in which the outgroups are passed to it: `--outg gadus_morhua,ceratoscopelus_warmingii` makes the program freeze and yields an empty output file, while `--outg ceratoscopelus_warmingii,gadus_morhua` works as intended, with values successfully estimated for all 615 loci (even those in which one of the outgroups was not present).
+
+Step 7: get_bp_genetrees
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-loci
+```
+
+Here, too, the congruence with the reference tree was successfully estimated for all 615 gene trees.
+
+Step 8: combine_results
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/combine_results.py /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-loci /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-loci --outf /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-loci
+```
+
+Step 9: rate distribution:
+
+```{r}
+sortadate_results <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-loci")
+colnames(sortadate_results) <- c("Locus", "Root-to-tip_variance", "Tree_length", "Bipartition_support")
+hist(sortadate_results$Tree_length, breaks = 100, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates")
+```
+
+Step 10: get Robinson-Foulds distances of the individual gene trees from the reference tree:
+
+```
+import os, uuid
+from ete3 import Tree
+
+t2 = Tree("/Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre", format = 9)
+for file in os.listdir("/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/"):
+    if file.endswith(".tre"):
+        filename = "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/" + file
+        t1 = Tree(filename, format = 2)
+        try:
+            rf = t1.robinson_foulds(t2)
+            print str(file), (rf[0])
+        except:
+            pass
+```
+
+```
+python robinsonfoulds.py > /Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-loci
+```
+
+```{r, echo = FALSE}
+rf <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-loci")
+colnames(rf) <- c("Locus", "Robinson_Foulds_distance")
+hist(rf$Robinson_Foulds_distance, breaks = 100, xlab = "Robinson-Foulds distance from the ExaML concatenated tree", main = "Distribution of RF distances")
+```
+
+```{r, echo = FALSE, eval = FALSE}
+png("/Users/David/Grive/Alfaro_Lab/Pelagia/fully_resolved_rates_and_distances.png", width = 2800, height = 1600, pointsize = 48)
+par(mfrow=c(1,2), oma = c(0, 0, 2, 0))
+hist(sortadate_results$Tree_length, breaks = 50, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates", col = "greenyellow")
+hist(rf$Robinson_Foulds_distance, breaks = 50, xlab = "RF distance from the ExaML concatenated tree", main = "Distribution of RF distances", col = "lightcoral")
+mtext("615 fully resolved gene trees", outer = TRUE, cex = 1.5)
+```
+
+### Individual loci, collapsed gene trees
+
+Step 1: Use the following Python script to collapse all nodes with SH-like support values below 0.90:
+
+```
+import os, uuid
+from ete3 import Tree
+
+for file in os.listdir("/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete"):
+    if file.endswith(".tre"):
+        filename = "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/" + file
+        outname = "/Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees/" + file
+        t = Tree(filename, format=2)
+
+        print t.get_ascii(attributes=['support', 'name'])
+
+        for node in t.get_descendants():
+            if not node.is_leaf() and node.support <= 0.9:
+                node.delete()
+
+        print t.get_ascii(attributes=['support', 'name'])
+
+        t.write(format=0, outfile=outname)
+```
+
+Step 2: Copy the locus alignments into the new folder:
+
+```
+cp 95_percent_complete/*.fasta Min_SH-like_90_trees
+```
+
+Step 3: Re-run SortaDate on the collapsed trees:
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci --outg ceratoscopelus_warmingii,gadus_morhua
+```
+
+Note: a new type of warning was printed to the screen when the script was run, presumably due to the presence of polytomies in the collapsed trees: "this really only works with nexus or newick". Consequently, the resulting file had to be cleaned up by deleting rows that contained no information at all (i.e., neither root-to-tip variance nor tree length) and those that contained NAs:
+
+
+```{r}
+var_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci",na.strings=c("", "NA"), sep = "\t")
+var_collapsed <- na.omit(var_collapsed)
+```
+```{r, eval = FALSE}
+write.table(var_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci", quote = F, col.names = F, row.names = F, sep = "\t")
+```
+
+This reduced the number of usable loci from 615 to 313 (success rate = 50.9%).
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-loci
+```
+
+The bipartition support scores were calculated successfully for all loci. Therefore, the next step (combining the two files) was performed manually in R rather than using the provided script:
+
+```{r}
+colnames(var_collapsed) <- c("Locus", "Variance", "Length")
+bp_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-loci")
+colnames(bp_collapsed) <- c("Locus", "Support")
+comb_collapsed <- merge(var_collapsed, bp_collapsed, by = "Locus")
+```
+```{r, eval = FALSE}
+write.table(comb_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-collapsed-loci", quote = F, col.names = F, row.names = F, sep = "\t")
+```
+
+Step 4: Re-calculate the Robinson-Foulds distances from the ExaML tree:
+
+```
+python robinsonfoulds.py > /Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-collapsed-loci
+```
+
+Note that this step was successfully performed for 487 loci only. Moreover, not all of these overlap with the 313 loci for which root-to-tip variance and tree length are available.
+
+Step 5: Use only the overlapping loci to construct the rate and RF-distance distributions:
+
+```{r}
+rf_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-collapsed-loci")
+hist(var_collapsed[var_collapsed$Locus %in% rf_collapsed[,1], ]$Length, breaks = 100, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates")
+hist(rf_collapsed[rf_collapsed[,1] %in% var_collapsed$Locus, 2], breaks = 100, xlab = "Robinson-Foulds distance from the ExaML concatenated tree", main = "Distribution of RF distances")
+```
+
+```{r, echo = FALSE, eval = FALSE}
+png("/Users/David/Grive/Alfaro_Lab/Pelagia/collapsed_rates_and_distances.png", width = 2800, height = 1600, pointsize = 48)
+par(mfrow=c(1,2), oma = c(0, 0, 2, 0))
+hist(var_collapsed[var_collapsed$Locus %in% rf_collapsed[,1], ]$Length, breaks = 50, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates", col = "greenyellow")
+hist(rf_collapsed[rf_collapsed[,1] %in% var_collapsed$Locus, 2], breaks = 100, xlab = "RF distance from the ExaML concatenated tree", main = "Distribution of RF distances", col = "lightcoral")
+mtext("306 collapsed gene trees (no nodes w/ SH-like < 0.9)", outer = TRUE, cex = 1.5)
+```
