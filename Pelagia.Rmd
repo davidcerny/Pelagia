@@ -26,11 +26,54 @@ Step 3: make the phylip alignment file compatible with PAML by ensuring that the
 gsed -i 's/ /  /g' raxml_95_alignments.phylip
 ```
 
-Step 4: run a baseml analysis to find appropriate priors to be placed on the `rgene_gamma` and `sigma2_gamma` parameters. The analysis was run under the strict clock model conditioned on the root age, which was set to 113.02 Ma (the mean of the exponential distribution whose offset equals 98 Ma and whose 95th percentile equals 143 Ma):
+Step 4: run a baseml analysis to find appropriate priors to be placed on the `rgene_gamma` and `sigma2_gamma` hyperparameters. The analysis was run under the strict clock model conditioned on the root age, which was set to 113.02 Ma (the mean of the exponential distribution whose offset equals 98 Ma and whose 95th percentile equals 143 Ma):
 
 ```{r comment='', echo = FALSE}
 cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_baseml.ctl"), sep = '\n')
 ```
+
+The baseml analysis finished up in 97:33:54, with the final substitution rate estimate of 0.145074 substitution per 100 million years. Following Alfaro et al., $\alpha$ (the gamma shape parameter) was set to 2 and $\beta$ (the corresponding scale parameter) was chosen so that the mean ($\frac{\alpha}{\beta}$) would equal to the rate when rescaled to a time unit of 10 million years:
+
+```{r}
+beta_pelagia <- 2 / (0.145074 / 10)
+beta_pelagia
+```
+
+This corresponds to the following `rgene_gamma` prior (i.e., the prior on the mean of the lognormal distribution from which branch are drawn):
+
+```{r, echo = FALSE}
+curve(dgamma(x, shape = 2, rate = 137.86), from = 0, to = 0.5, main = "Rgene_gamma (mean substitution rate) prior", xlab = "Substitutions per 10 million years", ylab = "Probability density")
+```
+
+Following Alfaro et al., the `sigma2_prior`, which specifies the variance of the logarithm of the rate of evolution, was parameterized as the gamma distribution with $\alpha$ = 2 and $\beta$ = 5. This yielded the following rate distribution:
+
+```{r, echo = FALSE}
+curve(dlnorm(x, meanlog = log(2/137.86), sdlog = sqrt(2/5)), from = 0, to = 0.5, main = "Relaxed clock rate distribution", xlab = "Substitutions per 10 million years", ylab = "Probability density")
+```
+
+Step 5: start 15 MCMCTree analyses under the settings described in the configuration file below:
+
+```{r comment='', echo = FALSE, message = FALSE, warning = FALSE}
+cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_mcmctree.ctl"), sep = '\n')
+```
+
+Chain      | Run time
+-----------|---------
+pelagia 1  | 13:31:44
+pelagia 2  | 13:14:21
+pelagia 3  | 13:12:01
+pelagia 4  | 13:27:41
+pelagia 5  | 13:16:03
+pelagia 6  | 13:24:40
+pelagia 7  | 13:19:08
+pelagia 8  | 13:15:22
+pelagia 9  | 13:16:06
+pelagia 10 | 13:15:47
+pelagia 11 | 13:27:14
+pelagia 12 | 13:21:35
+pelagia 13 | 13:24:51
+pelagia 14 | 13:26:08
+pelagia 15 | 13:15:59
 
 ## SortaDate
 
