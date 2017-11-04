@@ -5,79 +5,19 @@ date: "10/19/2017"
 output: html_document
 ---
 
-## MCMCTree Concatenated Analysis
+# Protocol summary
 
-Step 1: delete node numbers from the ExaML tree, as the tree file used by MCMCTree should contain no information except for topology and calibrations:
+**Initial filtering step:** Exclude the 20% of loci with the shortest tree length from the 615 UCE pool and all of the loci in the top 20% of RF distance from the concatenated tree
 
-```
-gsed -i 's/)[0-9]*:/):/g' ExaML_pelagia-75p-examl.tre
-```
+**Track 1:** Run PartitionFinder on the sites remaining in the filtered UCE pool using *k*-means, then SortaDate the resulting partitions.
 
-Step 2: delete the branch lengths.
+**Track 2:** Break up the loci into 150-bp chunks and run SortaDate on these. Rank the chunks by bipartition support, and keep adding the highest-support chunks until you reach the same total number of sites that is included in the alignment resulting from Track 3 (see below). Find out what value of bipartition support you end up at when this threshold is reached.
 
-```
-gsed -i 's/:[^:]*,/,/g' ExaML_pelagia-75p-examl.tre
-gsed -i 's/:[^:]*)/)/g' ExaML_pelagia-75p-examl.tre
-```
+**Track 3:** Run SortaDate on intact loci. Concatenate those with bipartition support greater than 0.5, then run PartitionFinder on the resulting alignment (iteratively if needed) until you get 10 partitions or fewer. Run a PhyloBayes autocorrelation test on each of the selected loci.
 
-Step 3: make the phylip alignment file compatible with PAML by ensuring that there are at least two spaces between the name of a taxon and the corresponding sequence:
+# Initial filtering step
 
-```
-gsed -i 's/ /  /g' raxml_95_alignments.phylip
-```
-
-Step 4: run a baseml analysis to find appropriate priors to be placed on the `rgene_gamma` and `sigma2_gamma` hyperparameters. The analysis was run under the strict clock model conditioned on the root age, which was set to 113.02 Ma (the mean of the exponential distribution whose offset equals 98 Ma and whose 95th percentile equals 143 Ma):
-
-```{r comment='', echo = FALSE}
-cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_baseml.ctl"), sep = '\n')
-```
-
-The baseml analysis finished up in 97:33:54, with the final substitution rate estimate of 0.145074 substitution per 100 million years. Following Alfaro et al., $\alpha$ (the gamma shape parameter) was set to 2 and $\beta$ (the corresponding scale parameter) was chosen so that the mean ($\frac{\alpha}{\beta}$) would equal to the rate when rescaled to a time unit of 10 million years:
-
-```{r}
-beta_pelagia <- 2 / (0.145074 / 10)
-beta_pelagia
-```
-
-This corresponds to the following `rgene_gamma` prior (i.e., the prior on the mean of the lognormal distribution from which branch are drawn):
-
-```{r, echo = FALSE}
-curve(dgamma(x, shape = 2, rate = 137.86), from = 0, to = 0.5, main = "Rgene_gamma (mean substitution rate) prior", xlab = "Substitutions per 10 million years", ylab = "Probability density")
-```
-
-Following Alfaro et al., the `sigma2_prior`, which specifies the variance of the logarithm of the rate of evolution, was parameterized as the gamma distribution with $\alpha$ = 2 and $\beta$ = 5. This yielded the following rate distribution:
-
-```{r, echo = FALSE}
-curve(dlnorm(x, meanlog = log(2/137.86), sdlog = sqrt(2/5)), from = 0, to = 0.5, main = "Relaxed clock rate distribution", xlab = "Substitutions per 10 million years", ylab = "Probability density")
-```
-
-Step 5: start 15 MCMCTree analyses under the settings described in the configuration file below:
-
-```{r comment='', echo = FALSE, message = FALSE, warning = FALSE}
-cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_mcmctree.ctl"), sep = '\n')
-```
-
-Chain      | Run time
------------|---------
-pelagia 1  | 13:31:44
-pelagia 2  | 13:14:21
-pelagia 3  | 13:12:01
-pelagia 4  | 13:27:41
-pelagia 5  | 13:16:03
-pelagia 6  | 13:24:40
-pelagia 7  | 13:19:08
-pelagia 8  | 13:15:22
-pelagia 9  | 13:16:06
-pelagia 10 | 13:15:47
-pelagia 11 | 13:27:14
-pelagia 12 | 13:21:35
-pelagia 13 | 13:24:51
-pelagia 14 | 13:26:08
-pelagia 15 | 13:15:59
-
-## SortaDate
-
-### Individual loci, fully resolved gene trees
+SortaDate was used to calculate the length of individual gene trees:
 
 Step 1: Convert the alignment files from Nexus to FASTA (Geneious -> Batch export).
 
@@ -157,15 +97,7 @@ Step 8: combine_results
 python /Users/David/Grive/Alfaro_Lab/SortaDate/src/combine_results.py /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-loci /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-loci --outf /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-loci
 ```
 
-Step 9: rate distribution:
-
-```{r}
-sortadate_results <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-loci")
-colnames(sortadate_results) <- c("Locus", "Root-to-tip_variance", "Tree_length", "Bipartition_support")
-hist(sortadate_results$Tree_length, breaks = 100, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates")
-```
-
-Step 10: get Robinson-Foulds distances of the individual gene trees from the reference tree:
+Step 9: get Robinson-Foulds distances of the individual gene trees from the reference tree:
 
 ```
 import os, uuid
@@ -188,110 +120,17 @@ python robinsonfoulds.py > /Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-loci
 ```
 
 ```{r, echo = FALSE}
+sortadate_results <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-loci")
+colnames(sortadate_results) <- c("Locus", "Root_to_tip_variance", "Tree_length", "Bipartition_support")
 rf <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-loci")
 colnames(rf) <- c("Locus", "Robinson_Foulds_distance")
-hist(rf$Robinson_Foulds_distance, breaks = 100, xlab = "Robinson-Foulds distance from the ExaML concatenated tree", main = "Distribution of RF distances")
-```
-
-```{r, echo = FALSE, eval = FALSE}
-png("/Users/David/Grive/Alfaro_Lab/Pelagia/fully_resolved_rates_and_distances.png", width = 2800, height = 1600, pointsize = 48)
 par(mfrow=c(1,2), oma = c(0, 0, 2, 0))
-hist(sortadate_results$Tree_length, breaks = 50, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates", col = "greenyellow")
-hist(rf$Robinson_Foulds_distance, breaks = 50, xlab = "RF distance from the ExaML concatenated tree", main = "Distribution of RF distances", col = "lightcoral")
+hist(sortadate_results$Tree_length, breaks = 50, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths", col = "greenyellow")
+hist(rf$Robinson_Foulds_distance, breaks = 50, xlab = "RF distance from the concatenated tree", main = "Distribution of RF distances", col = "lightcoral")
 mtext("615 fully resolved gene trees", outer = TRUE, cex = 1.5)
 ```
 
-### Individual loci, collapsed gene trees
-
-Step 1: Use the following Python script to collapse all nodes with SH-like support values below 0.90:
-
-```
-import os, uuid
-from ete3 import Tree
-
-for file in os.listdir("/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete"):
-    if file.endswith(".tre"):
-        filename = "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/" + file
-        outname = "/Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees/" + file
-        t = Tree(filename, format=2)
-
-        print t.get_ascii(attributes=['support', 'name'])
-
-        for node in t.get_descendants():
-            if not node.is_leaf() and node.support <= 0.9:
-                node.delete()
-
-        print t.get_ascii(attributes=['support', 'name'])
-
-        t.write(format=0, outfile=outname)
-```
-
-Step 2: Copy the locus alignments into the new folder:
-
-```
-cp 95_percent_complete/*.fasta Min_SH-like_90_trees
-```
-
-Step 3: Re-run SortaDate on the collapsed trees:
-
-```
-python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci --outg ceratoscopelus_warmingii,gadus_morhua
-```
-
-Note: a new type of warning was printed to the screen when the script was run, presumably due to the presence of polytomies in the collapsed trees: "this really only works with nexus or newick". Consequently, the resulting file had to be cleaned up by deleting rows that contained no information at all (i.e., neither root-to-tip variance nor tree length) and those that contained NAs:
-
-
-```{r}
-var_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci",na.strings=c("", "NA"), sep = "\t")
-var_collapsed <- na.omit(var_collapsed)
-```
-```{r, eval = FALSE}
-write.table(var_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci", quote = F, col.names = F, row.names = F, sep = "\t")
-```
-
-This reduced the number of usable loci from 615 to 313 (success rate = 50.9%).
-
-```
-python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-loci
-```
-
-The bipartition support scores were calculated successfully for all loci. Therefore, the next step (combining the two files) was performed manually in R rather than using the provided script:
-
-```{r}
-colnames(var_collapsed) <- c("Locus", "Variance", "Length")
-bp_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-loci")
-colnames(bp_collapsed) <- c("Locus", "Support")
-comb_collapsed <- merge(var_collapsed, bp_collapsed, by = "Locus")
-```
-```{r, eval = FALSE}
-write.table(comb_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-collapsed-loci", quote = F, col.names = F, row.names = F, sep = "\t")
-```
-
-Step 4: Re-calculate the Robinson-Foulds distances from the ExaML tree:
-
-```
-python robinsonfoulds.py > /Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-collapsed-loci
-```
-
-Note that this step was successfully performed for 487 loci only. Moreover, not all of these overlap with the 313 loci for which root-to-tip variance and tree length are available.
-
-Step 5: Use only the overlapping loci to construct the rate and RF-distance distributions:
-
-```{r}
-rf_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-collapsed-loci")
-hist(var_collapsed[var_collapsed$Locus %in% rf_collapsed[,1], ]$Length, breaks = 100, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates")
-hist(rf_collapsed[rf_collapsed[,1] %in% var_collapsed$Locus, 2], breaks = 100, xlab = "Robinson-Foulds distance from the ExaML concatenated tree", main = "Distribution of RF distances")
-```
-
-```{r, echo = FALSE, eval = FALSE}
-png("/Users/David/Grive/Alfaro_Lab/Pelagia/collapsed_rates_and_distances.png", width = 2800, height = 1600, pointsize = 48)
-par(mfrow=c(1,2), oma = c(0, 0, 2, 0))
-hist(var_collapsed[var_collapsed$Locus %in% rf_collapsed[,1], ]$Length, breaks = 50, xlab = "Tree length (assumed proportional to rate)", main = "Distribution of gene tree lengths / locus rates", col = "greenyellow")
-hist(rf_collapsed[rf_collapsed[,1] %in% var_collapsed$Locus, 2], breaks = 100, xlab = "RF distance from the ExaML concatenated tree", main = "Distribution of RF distances", col = "lightcoral")
-mtext("306 collapsed gene trees (no nodes w/ SH-like < 0.9)", outer = TRUE, cex = 1.5)
-```
-
-Step 6: exclude the 20% of loci with the shortest tree length from the 615-UCE pool as well as all of the loci in the top 20% of RF distance from the concatenated tree:
+Step 10: exclude the 20% of loci with the shortest tree length from the 615-UCE pool as well as all of the loci in the top 20% of RF distance from the concatenated tree:
 
 ```{r}
 tree_quantile <- quantile(sortadate_results$Tree_length, probs = seq(0, 1, .2))
@@ -306,27 +145,34 @@ write.table(filtered_loci, "/Users/David/Grive/Alfaro_Lab/Pelagia/filtered_loci.
 
 These selection criteria yielded a filtered dataset of 440 loci (71.5% of the original number), suggesting that the nearly invariant loci with the shortest tree length also performed the worst in terms of topology estimation.
 
-Step 7: create a directory with just the selected loci:
+Step 11: create a directory with just the selected loci:
 
-Step 7.1: get a list of the names of the corresponding tree files:
+Step 11.1: get a list of the names of the corresponding tree files:
 
 ```{r, eval = FALSE}
 write.table(filtered_loci$Locus, "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/filtered_loci_names.txt", row.names = FALSE, col.names = FALSE, quote = FALSE)
 ```
 
-Step 7.2: change the endings so that the file lists alignments rather than trees:
+Step 11.2: change the endings so that the file lists alignments rather than trees:
 
 ```
 gsed -i 's/tre/fasta/g' filtered_loci_names.txt
 ```
 
-Step 7.3: copy the files listed to a new directory:
+Step 11.3: copy the files listed to a new directory:
 
 ```
 for file in `cat filtered_loci_names.txt`; do cp "$file" /Users/David/Grive/Alfaro_Lab/Pelagia/Filtered/ ; done
 ```
 
-#### Track 1: PartitionFinder on sites
+Step 12: subset the `comb-pelagia-loci` so that it contains only the 440 selected loci:
+
+```{r, eval = FALSE}
+comb_filtered <- sortadate_results[sortadate_results$Locus %in% filtered_loci$Locus,]
+write.table(comb_filtered, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-filtered-loci", row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+# Track 1: PartitionFinder on sites
 
 Step 1: change the alignment ending to make the files recognizable to FASconCAT:
 
@@ -349,7 +195,7 @@ perl catfasta2phyml-master/catfasta2phyml.pl --verbose Pelagia/Filtered/FcC_smat
 Step 4: run PartitionFinder on the following configuration file using the command below:
 
 ```{r comment='', echo = FALSE}
-cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/partition_finder.cfg"), sep = '\n')
+cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/partition_finder.cfg"), sep = '\n')
 ```
 
 ```
@@ -359,7 +205,7 @@ python PartitionFinder.py /home/analysis/partitionfinder-new/pelagia-filtered-lo
 Step 5: extract the list of partitions from `best_scheme.txt` and read it into R:
 
 ```{r}
-partitions <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/partitions.txt", sep = "|", header = TRUE)
+partitions <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/partitions.txt", sep = "|", header = TRUE)
 ```
 
 Step 6: prepare a list of alignments and information files to download:
@@ -369,13 +215,13 @@ alignments <- paste(gsub(" ", "", partitions[,4], fixed = TRUE), ".phy", sep = "
 infofiles <- paste("RAxML_info.", gsub(" ", "", partitions[,4], fixed = TRUE), "_GTR+G.txt", sep = "")
 ```
 ```{r, eval = FALSE}
-write(cbind(alignments, infofiles), "/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/whattorsync.txt")
+write(cbind(alignments, infofiles), "/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/whattorsync.txt")
 ```
 
 Step 7: download the relevant files as follows:
 
 ```
-rsync --files-from=/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/Partitions/whattorsync.txt analysis@azathoth.eeb.ucla.edu:~/partitionfinder-new/pelagia-filtered-loci/analysis/phylofiles /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/Partitions
+rsync --files-from=/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions/whattorsync.txt analysis@azathoth.eeb.ucla.edu:~/partitionfinder-new/pelagia-filtered-loci/analysis/phylofiles /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions
 ```
 
 State 8: extract the branch length multipliers from all the info files:
@@ -387,7 +233,7 @@ for file in `cat whattorsync.txt`; do gsed -n -e 's/^.*Branch length scaler: //p
 State 9: add the rate info to your initial partition table:
 
 ```{r}
-multipliers <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/Partitions/multipliers.txt")
+multipliers <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions/multipliers.txt")
 partitions <- cbind(partitions, multipliers)
 ```
 
@@ -398,29 +244,435 @@ plot(partitions[,3], partitions[,6], xlab = "Partition length (bp)", ylab = "Rel
 plot(partitions[,3], partitions[,6], xlim = c(0, 20000), xlab = "Partition length (bp)", ylab = "Relative rate", pch = 19, main = "(Longest partition excluded)")
 ```
 
-#### Track 3: SortaDate on the filtered loci
-
-Step 1: Subset the `comb-pelagia-loci` so that it contains only the 440 selected loci:
-
-```{r, eval = FALSE}
-comb_filtered <- sortadate_results[sortadate_results$Locus %in% filtered_loci$Locus,]
-write.table(comb_filtered, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-filtered-loci", row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
+```{r, echo = FALSE, eval = FALSE}
+png("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/ratevslength.png", width = 1600, height = 2800, pointsize = 48)
+par(mfrow=c(2,1))
+plot(partitions[,3], partitions[,6], xlab = "Partition length (bp)", ylab = "Relative rate", pch = 19, main = "All 37 partitions")
+plot(partitions[,3], partitions[,6], xlim = c(0, 20000), xlab = "Partition length (bp)", ylab = "Relative rate", pch = 19, main = "(Longest partition excluded)")
 ```
 
-Step 2: run the `get_good_genes` with default weights assigned to the three available criteria (i.e., in order of descending priority: bipartition support, root-to-tip variance, tree length) to sort the 440 loci from best to worst:
+# Track 2: SortaDate on 150-bp chunks
+
+Step 1: split the FASTA files of individual loci using a custom R script:
+
+```
+for file in `cat filtered_loci_names.txt`; do Rscript /Users/David/Grive/Alfaro_Lab/Pelagia/newandimprovedsplitter.R "$file" ; done
+```
+
+Step 2: add a file extension to the chunk files:
+
+```
+find . -type f -exec mv '{}' '{}'.fasta \;
+```
+
+### Fully resolved trees
+
+Step 3: Generate a script to perform a RAxML analysis with SH-like support values on each of the 2397 chunks.
+
+```{r, echo = FALSE, eval = FALSE}
+chunklist <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/Chunks/chunklist.txt")
+n <- length(unlist(chunklist))
+
+# 1st part of the command: what to analyze
+
+raxmlcommands <- vector(mode="character", length = n)
+for(i in chunklist) {
+  raxmlcommands[i] <- paste("ete3 build -w standard_raxml -n /Users/David/Grive/Alfaro_Lab/Pelagia/Chunks/", i, sep = "")
+}
+
+# 2nd part of the command: names to give to the output files
+
+withendings <- as.character(as.vector(as.matrix(chunklist)))
+noendings <- vector()
+for(i in withendings) {
+  noendings <- append(noendings, sapply(strsplit(i, split='.', fixed=TRUE), function(x) (x[1])))
+}
+outputnames <- vector()
+for(i in noendings) {
+  outputnames <- append(outputnames, paste(" -o /Users/David/Grive/Alfaro_Lab/Pelagia/Chunks/", i, sep=""))
+}
+
+length(outputnames)
+
+# Put it together and print it to file:
+
+commandlist <- paste(raxmlcommands, outputnames, "-tree", sep = "")
+write(commandlist, "/Users/David/Grive/Alfaro_Lab/Pelagia/2397-chunk-analysis.sh")
+```
+
+The analysis was successful for 1180 chunks, corresponding to a success rate of 49.2%.
+
+Step 4: move and rename the tree files.
+
+```
+find . -name '*.nw' -exec mv {} . \;
+ls -lR ./*.nw | wc -l 
+find . -name "*.fasta.final_tree.nw" -exec rename 's/.fasta.final_tree.nw$/.tre/' {} \;
+```
+
+Step 5: get_var_length
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/Chunks --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-chunks --outg ceratoscopelus_warmingii,gadus_morhua
+```
+
+Step 6: get_bp_genetrees
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/Chunks /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-chunks
+```
+
+Step 7: combine_results
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/combine_results.py /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-chunks /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-chunks --outf /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-chunks
+```
+
+Step 8: get Robinson-Foulds distances from the ExaML tree
+
+```
+python robinsonfoulds.py > rf-pelagia-chunks
+```
+
+Step 9: run the `get_good_genes` script with default weights assigned to the three criteria (i.e., in order of descending priority: bipartition support, root-to-tip variance, tree length) to sort the chunks from best to worst:
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_good_genes.py /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-chunks --max 1180 --order 3,1,2 --outf /Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-chunks
+```
+
+Step 10: make bivariate plots to show the relationships between the three key variables:
+
+```{r, echo = FALSE}
+gg_pelagia_chunks <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-chunks", header = TRUE)
+par(oma = c(0, 0, 2, 0))
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+plot(gg_pelagia_chunks$bipartition, gg_pelagia_chunks$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Tree length vs. bipartition support", col = "lightcoral")
+abline(lm(gg_pelagia_chunks$treelength ~ gg_pelagia_chunks$bipartition))
+plot(gg_pelagia_chunks$bipartition, gg_pelagia_chunks$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Clockiness vs. bipartition support", col = "greenyellow")
+abline(lm(gg_pelagia_chunks$root.to.tip_var ~ gg_pelagia_chunks$bipartition))
+plot(gg_pelagia_chunks$root.to.tip_var, gg_pelagia_chunks$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Tree length vs. clockiness", col = "cornflowerblue")
+abline(lm(gg_pelagia_chunks$treelength ~ gg_pelagia_chunks$root.to.tip_var))
+mtext("1180 chunks (fully resolved trees)", outer = TRUE, cex = 1.5)
+```
+
+### Collapsed trees
+
+Step 11: collapse nodes with SH-like support values of less than 0.90 using the following Python script:
+
+```
+import os, uuid
+from ete3 import Tree
+
+for file in os.listdir("/Users/David/Grive/Alfaro_Lab/Pelagia/Chunks"):
+    if file.endswith(".tre"):
+        filename = "/Users/David/Grive/Alfaro_Lab/Pelagia/Chunks/" + file
+        outname = "/Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_chunk_trees/" + file
+        t = Tree(filename, format=2)
+
+        print t.get_ascii(attributes=['support', 'name'])
+
+        for node in t.get_descendants():
+            if not node.is_leaf() and node.support <= 0.9:
+                node.delete()
+
+        print t.get_ascii(attributes=['support', 'name'])
+
+        t.write(format=0, outfile=outname)
+```
+
+Step 12: Copy the locus alignments into the new folder:
+
+```
+cp Chunks/*.fasta Min_SH-like_90_chunk_trees
+```
+
+Step 13: Re-run SortaDate on the collapsed trees:
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_chunk_trees --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-chunks --outg ceratoscopelus_warmingii,gadus_morhua
+```
+
+Note: a new type of warning was printed to the screen when the script was run, presumably due to the presence of polytomies in the collapsed trees: "this really only works with nexus or newick". Consequently, the resulting file had to be cleaned up by deleting rows that contained no information at all (i.e., neither root-to-tip variance nor tree length) and those that contained NAs.
+
+Step 14: clean up the resulting file:
+
+```{r}
+var_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-chunks",na.strings=c("", "NA"), sep = "\t")
+var_collapsed <- na.omit(var_collapsed)
+```
+```{r, eval = FALSE}
+write.table(var_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-chunks", quote = F, col.names = F, row.names = F, sep = "\t")
+```
+
+The cleaned up file contains information about root-to-tip variance and tree length for only 558 chunks, suggesting that SortaDate was able to estimate these variables only in 47.3% of cases.
+
+Step 15: get_bp_genetrees on chunks
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_chunk_trees /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-chunks
+```
+
+The bipartition support was calculated successfully for all chunks. Therefore, the next step (combining the two files) was performed manually in R rather than using the provided script.
+
+Step 16: manually combine the results with the `var-pelagia-collapsed-chunks` file:
+
+```{r}
+colnames(var_collapsed) <- c("Locus", "Variance", "Length")
+bp_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-chunks")
+colnames(bp_collapsed) <- c("Locus", "Support")
+comb_collapsed <- merge(var_collapsed, bp_collapsed, by = "Locus")
+```
+```{r, eval = FALSE}
+write.table(comb_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-collapsed-chunks", quote = F, col.names = F, row.names = F, sep = "\t")
+```
+
+Step 17: recalculate the RF distances from the reference tree:
+
+```
+python robinsonfoulds.py > rf-pelagia-collapsed-chunks
+```
+
+This task was successfully performed for 796 out of the 1180 chunks.
+
+Step 18: get_good_genes
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_good_genes.py /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-collapsed-chunks --max 558 --order 3,1,2 --outf /Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-collapsed-chunks
+```
+
+Step 19: bivariate plots showing the relationships among the three variables:
+
+```{r, echo = FALSE}
+gg_pelagia_colchunks <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-collapsed-chunks", header = TRUE)
+par(oma = c(0, 0, 2, 0))
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+plot(gg_pelagia_colchunks$bipartition, gg_pelagia_colchunks$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Tree length vs. bipartition support", col = "lightcoral")
+abline(lm(gg_pelagia_colchunks$treelength ~ gg_pelagia_colchunks$bipartition))
+plot(gg_pelagia_colchunks$bipartition, gg_pelagia_colchunks$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Clockiness vs. bipartition support", col = "greenyellow")
+abline(lm(gg_pelagia_colchunks$root.to.tip_var ~ gg_pelagia_colchunks$bipartition))
+plot(gg_pelagia_colchunks$root.to.tip_var, gg_pelagia_colchunks$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Tree length vs. clockiness", col = "cornflowerblue")
+abline(lm(gg_pelagia_colchunks$treelength ~ gg_pelagia_colchunks$root.to.tip_var))
+mtext("558 chunks (no nodes w/ SH-like < 0.9)", outer = TRUE, cex = 1.5)
+```
+
+# Track 3: SortaDate on loci
+
+Step 1: get_good_genes
 
 ```
 python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_good_genes.py /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-filtered-loci --max 440 --order 3,1,2 --outf /Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-filtered
 ```
 
-Step 3: make bivariate plots showing the relationships between each pair of variables:
+Step 2: make bivariate plots showing the relationships between each pair of variables:
 
 ```{r, echo = FALSE}
 gg_pelagia <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-filtered", header = TRUE)
-plot(gg_pelagia$bipartition, gg_pelagia$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Filtered dataset: tree length vs. bipartition support")
+par(oma = c(0, 0, 2, 0))
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+plot(gg_pelagia$bipartition, gg_pelagia$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Tree length vs. bipartition support", col = "lightcoral")
 abline(lm(gg_pelagia$treelength ~ gg_pelagia$bipartition))
-plot(gg_pelagia$bipartition, gg_pelagia$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Filtered dataset: clockiness vs. bipartition support")
+plot(gg_pelagia$bipartition, gg_pelagia$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Clockiness vs. bipartition support", col = "greenyellow")
 abline(lm(gg_pelagia$root.to.tip_var ~ gg_pelagia$bipartition))
-plot(gg_pelagia$root.to.tip_var, gg_pelagia$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Filtered dataset: tree length vs. clockiness")
+plot(gg_pelagia$root.to.tip_var, gg_pelagia$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Tree length vs. clockiness", col = "cornflowerblue")
 abline(lm(gg_pelagia$treelength ~ gg_pelagia$root.to.tip_var))
+mtext("440 loci (fully resolved trees)", outer = TRUE, cex = 1.5)
 ```
+
+### Collapsed trees
+
+Step 3: collapse all nodes with SH-like support values below 0.90:
+
+```
+python collapsenodes.py
+```
+
+Step 4: Copy the locus alignments into the new folder:
+
+```
+cp 95_percent_complete/*.fasta Min_SH-like_90_trees
+```
+
+Step 5: Re-run SortaDate on the collapsed trees:
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci --outg ceratoscopelus_warmingii,gadus_morhua
+```
+
+Step 6: clean up the resulting file.
+
+```{r, echo = FALSE}
+var_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci",na.strings=c("", "NA"), sep = "\t")
+var_collapsed <- na.omit(var_collapsed)
+```
+```{r, echo = FALSE, eval = FALSE}
+write.table(var_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-collapsed-loci", quote = F, col.names = F, row.names = F, sep = "\t")
+```
+
+This reduced the number of usable loci from 615 to 313 (success rate = 50.9%).
+
+Step 7: get_bp_genetrees:
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/Min_SH-like_90_trees /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-loci
+```
+
+The bipartition support scores were calculated successfully for all loci.
+
+Step 8: manually combine the results with the `var-pelagia-collapsed-loci` file:
+
+```{r}
+colnames(var_collapsed) <- c("Locus", "Variance", "Length")
+bp_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-collapsed-loci")
+colnames(bp_collapsed) <- c("Locus", "Support")
+comb_collapsed <- merge(var_collapsed, bp_collapsed, by = "Locus")
+```
+```{r, eval = FALSE}
+write.table(comb_collapsed, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-collapsed-loci", quote = F, col.names = F, row.names = F, sep = "\t")
+```
+
+Step 9: Re-calculate the Robinson-Foulds distances from the ExaML tree:
+
+```
+python robinsonfoulds.py > /Users/David/Grive/Alfaro_Lab/Pelagia/rf-pelagia-collapsed-loci
+```
+
+Note that this step was successfully performed for 487 loci only. Moreover, not all of these overlap with the 313 loci for which root-to-tip variance and tree length are available.
+
+Step 10: get_good_genes:
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_good_genes.py /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-collapsed-loci --max 313 --order 3,1,2 --outf /Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-collapsed
+```
+
+Step 11: show the relationships among the three variables:
+
+```{r, echo = FALSE}
+gg_pelagia_collapsed <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-collapsed", header = TRUE)
+par(oma = c(0, 0, 2, 0))
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+plot(gg_pelagia_collapsed$bipartition, gg_pelagia_collapsed$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Tree length vs. bipartition support", col = "lightcoral")
+abline(lm(gg_pelagia_collapsed$treelength ~ gg_pelagia_collapsed$bipartition))
+plot(gg_pelagia_collapsed$bipartition, gg_pelagia_collapsed$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Clockiness vs. bipartition support", col = "greenyellow")
+abline(lm(gg_pelagia_collapsed$root.to.tip_var ~ gg_pelagia_collapsed$bipartition))
+plot(gg_pelagia_collapsed$root.to.tip_var, gg_pelagia_collapsed$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Tree length vs. clockiness", col = "cornflowerblue")
+abline(lm(gg_pelagia_collapsed$treelength ~ gg_pelagia_collapsed$root.to.tip_var))
+mtext("313 loci (no nodes w/ SH-like < 0.9)", outer = TRUE, cex = 1.5)
+```
+
+### Loci with the highest bipartition support
+
+Step 12: create a list of all loci whose fully resolved trees have bipartition support values of 0.5 or higher:
+
+```{r}
+gg_pelagia <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-filtered", header = TRUE, stringsAsFactors = FALSE)
+```
+```{r, eval = FALSE}
+write(gg_pelagia$name[gg_pelagia$bipartition >= 0.5], "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/highest-bipart-support-loci.txt", sep = "\n")
+```
+
+This criterion is satisfied by 138 (22.4%) loci.
+
+Step 13: make sure the resulting file lists alignments rather than trees:
+
+```
+gsed -i 's/tre/fasta/g' highest-bipart-support-loci.txt
+```
+
+Step 14: copy the corresponding alignments into a new folder:
+
+```
+for file in `cat highest-bipart-support-loci.txt`; do cp "$file" /Users/David/Grive/Alfaro_Lab/Pelagia/138_loci/ ; done
+```
+
+Step 15: convert these from FASTA to Nexus (Geneious -> Batch export).
+
+Step 16: concatenate these using a phyluce script:
+
+```
+phyluce_align_format_nexus_files_for_raxml \
+    --alignments 138_loci \
+    --output 138_loci_concat \
+    --charsets
+```
+
+The total length of the concatenated file is 114,462 bp.
+
+Step 17: run PartitionFinder on the following configuration file using the command below:
+
+```{r comment='', echo = FALSE}
+cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/partition_finder.cfg"), sep = '\n')
+```
+
+```
+python PartitionFinder.py /home/analysis/partitionfinder-new/pelagia-138-loci/partition_finder.cfg --verbose --raxml --save-phylofiles
+```
+
+# MCMCTree concatenated analysis (615 loci, unpartitioned)
+
+Step 1: delete node numbers from the ExaML tree, as the tree file used by MCMCTree should contain no information except for topology and calibrations:
+
+```
+gsed -i 's/)[0-9]*:/):/g' ExaML_pelagia-75p-examl.tre
+```
+
+Step 2: delete the branch lengths.
+
+```
+gsed -i 's/:[^:]*,/,/g' ExaML_pelagia-75p-examl.tre
+gsed -i 's/:[^:]*)/)/g' ExaML_pelagia-75p-examl.tre
+```
+
+Step 3: make the phylip alignment file compatible with PAML by ensuring that there are at least two spaces between the name of a taxon and the corresponding sequence:
+
+```
+gsed -i 's/ /  /g' raxml_95_alignments.phylip
+```
+
+Step 4: run a baseml analysis to find appropriate priors to be placed on the `rgene_gamma` and `sigma2_gamma` hyperparameters. The analysis was run under the strict clock model conditioned on the root age, which was set to 113.02 Ma (the mean of the exponential distribution whose offset equals 98 Ma and whose 95th percentile equals 143 Ma):
+
+```{r comment='', echo = FALSE}
+cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_baseml.ctl"), sep = '\n')
+```
+
+The baseml analysis finished up in 97:33:54, with the final substitution rate estimate of 0.145074 substitution per 100 million years. Following Alfaro et al., $\alpha$ (the gamma shape parameter) was set to 2 and $\beta$ (the corresponding scale parameter) was chosen so that the mean ($\frac{\alpha}{\beta}$) would equal to the rate when rescaled to a time unit of 10 million years:
+
+```{r}
+beta_pelagia <- 2 / (0.145074 / 10)
+beta_pelagia
+```
+
+This corresponds to the following `rgene_gamma` prior (i.e., the prior on the mean of the lognormal distribution from which branch are drawn):
+
+```{r, echo = FALSE}
+curve(dgamma(x, shape = 2, rate = 137.86), from = 0, to = 0.5, main = "Rgene_gamma (mean substitution rate) prior", xlab = "Substitutions per 10 million years", ylab = "Probability density")
+```
+
+Following Alfaro et al., the `sigma2_prior`, which specifies the variance of the logarithm of the rate of evolution, was parameterized as the gamma distribution with $\alpha$ = 2 and $\beta$ = 5. This yielded the following rate distribution:
+
+```{r, echo = FALSE}
+curve(dlnorm(x, meanlog = log(2/137.86), sdlog = sqrt(2/5)), from = 0, to = 0.5, main = "Relaxed clock rate distribution", xlab = "Substitutions per 10 million years", ylab = "Probability density")
+```
+
+Step 5: start 15 MCMCTree analyses under the settings described in the configuration file below:
+
+```{r comment='', echo = FALSE, message = FALSE, warning = FALSE}
+cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/pelagia_concatenated_mcmctree.ctl"), sep = '\n')
+```
+
+Chain      | Run time
+-----------|---------
+pelagia 1  | 13:31:44
+pelagia 2  | 13:14:21
+pelagia 3  | 13:12:01
+pelagia 4  | 13:27:41
+pelagia 5  | 13:16:03
+pelagia 6  | 13:24:40
+pelagia 7  | 13:19:08
+pelagia 8  | 13:15:22
+pelagia 9  | 13:16:06
+pelagia 10 | 13:15:47
+pelagia 11 | 13:27:14
+pelagia 12 | 13:21:35
+pelagia 13 | 13:24:51
+pelagia 14 | 13:26:08
+pelagia 15 | 13:15:59
