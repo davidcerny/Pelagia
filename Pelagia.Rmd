@@ -15,13 +15,19 @@ output: html_document
 
 **Track 3:** Run SortaDate on intact loci. Concatenate those with bipartition support greater than 0.5, then run PartitionFinder on the resulting alignment (iteratively if needed) until you get 10 partitions or fewer. Run a PhyloBayes autocorrelation test on each of the selected loci.
 
+**Subtrack 3.1:** Run the PhyloBayes model comparison (autocorrelation test) on each of the 138 loci whose gene trees have a bipartition support score of 0.5 or better.
+
+**Subtrack 3.2:** See if the concatenated 138-locus analysis will start in BEAST.
+
+**Subtrack 3.3:** In order to be able to perform a partitioned MCMCTree analysis, SortaDate the 21 partitions into which the 138 loci were grouped by PartitionFinder, and use the top 10.
+
 # Initial filtering step
 
 SortaDate was used to calculate the length of individual gene trees:
 
-Step 1: Convert the alignment files from Nexus to FASTA (Geneious -> Batch export).
+Step 1: convert the alignment files from Nexus to FASTA (Geneious -> Batch export).
 
-Step 2: Generate a script to perform a RAxML analysis with SH-like support values on each of the 615 loci:
+Step 2: generate a script to perform a RAxML analysis with SH-like support values on each of the 615 loci:
 
 ```{r, eval = FALSE}
 ucelist <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/ucelist.txt")
@@ -54,7 +60,7 @@ commandlist <- paste(raxmlcommands, outputnames, "-tree &&", sep = "")
 write(commandlist, "/Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/615-gene-tree-analysis.sh")
 ```
 
-Step 3: Run the script as follows:
+Step 3: run the script as follows:
 
 ```
 export PATH=~/anaconda_ete/bin:$PATH
@@ -62,14 +68,14 @@ chmod 755 /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/615-gene-tre
 /Users/David/Grive/Alfaro_Lab/Pelagia/95_percent_complete/615-gene-tree-analysis.sh
 ```
 
-Step 4: Move the resulting tree files from their nested subdirectories to the main directory:
+Step 4: move the resulting tree files from their nested subdirectories to the main directory:
 
 ```
 find . -name '*.nw' -exec mv {} . \;
 ls -lR ./*.nw | wc -l                     # Make sure you got all 615
 ```
 
-Step 5: Rename the trees to give them the `.tre` file ending that SortaDate will be looking for:
+Step 5: rename the trees to give them the `.tre` file ending that SortaDate will be looking for:
 
 ```
 find . -name "*.fasta.final_tree.nw" -exec rename 's/.fasta.final_tree.nw$/.tre/' {} \;
@@ -172,6 +178,10 @@ comb_filtered <- sortadate_results[sortadate_results$Locus %in% filtered_loci$Lo
 write.table(comb_filtered, "/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-filtered-loci", row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\t")
 ```
 
+
+
+
+
 # Track 1: PartitionFinder on sites
 
 Step 1: change the alignment ending to make the files recognizable to FASconCAT:
@@ -205,7 +215,7 @@ python PartitionFinder.py /home/analysis/partitionfinder-new/pelagia-filtered-lo
 Step 5: extract the list of partitions from `best_scheme.txt` and read it into R:
 
 ```{r}
-partitions <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/partitions.txt", sep = "|", header = TRUE)
+partitions <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/partitions.txt", sep = "|", header = TRUE, stringsAsFactors = FALSE, strip.white = TRUE)
 ```
 
 Step 6: prepare a list of alignments and information files to download:
@@ -250,6 +260,116 @@ par(mfrow=c(2,1))
 plot(partitions[,3], partitions[,6], xlab = "Partition length (bp)", ylab = "Relative rate", pch = 19, main = "All 37 partitions")
 plot(partitions[,3], partitions[,6], xlim = c(0, 20000), xlab = "Partition length (bp)", ylab = "Relative rate", pch = 19, main = "(Longest partition excluded)")
 ```
+
+Step 11: convert the alignment files from Phylip to FASTA (Geneious -> Batch export) and simplify the file endings of the resulting files:
+
+```
+find . -name "*.phy.fasta" -exec rename 's/.phy.fasta$/.fasta/' {} \;
+```
+
+Step 12: run RAxML on each of the 37 partitions to find the maximum likelihood tree and its SH-like support values using the following script (`runthruraxml.R`):
+
+```{r}
+args <- commandArgs(trailingOnly = TRUE)
+
+commandpart1 <- paste("ete3 build -w standard_raxml -n /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions/", args, sep = "")
+commandpart2 <- paste(" -o /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions/", args, sep="")
+wholecommand <- paste(commandpart1, commandpart2, "-tree", sep = "")
+write(wholecommand, "/Users/David/Grive/Alfaro_Lab/Pelagia/37-pfinder-partition-analysis.sh")
+```
+
+```
+cd /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions
+Rscript runthruraxml.R *.fasta
+export PATH=~/anaconda_ete/bin:$PATH
+chmod 755 /Users/David/Grive/Alfaro_Lab/Pelagia/37-pfinder-partition-analysis.sh
+/Users/David/Grive/Alfaro_Lab/Pelagia/37-pfinder-partition-analysis.sh
+```
+
+RAxML tree inference failed for the largest and nearly invariant 123-kbp partition.
+
+Step 13: move and rename the tree files.
+
+```
+find . -name '*.nw' -exec mv {} . \;
+find . -name "*.fasta.final_tree.nw" -exec rename 's/.fasta.final_tree.nw$/.tre/' {} \;
+```
+
+Step 14: SortaDate the 36 partitions for which RAxML trees are available.
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-kmeans --outg ceratoscopelus_warmingii,gadus_morhua
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/k-means/Partitions /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-kmeans
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/combine_results.py /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-kmeans /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-kmeans --outf /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-kmeans
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_good_genes.py /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-kmeans --max 36 --order 3,1,2 --outf /Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-kmeans
+```
+
+Step 15: merge the SortaDate output with the list of partition sizes and branch rate multipliers:
+
+```{r}
+kmeans_parts <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-kmeans", header = TRUE, stringsAsFactors = FALSE)
+colnames(kmeans_parts)
+colnames(partitions)[4] <- "name"
+colnames(partitions)[6] <- "multiplier"
+kmeans_parts <- merge(kmeans_parts, partitions, by = "name")
+```
+
+Step 16: does tree length (estimated by SortaDate) correlate with branch rate multipliers (estimated by PartitionFinder)?
+
+```{r}
+library(ggplot2)
+
+lm_eqn <- function(df){
+    m <- lm(df[,3] ~ df[,9]);
+    eq <- substitute(italic(y) == a + b %.% italic(x)*","~~italic(r)^2~"="~r2, 
+         list(a = format(coef(m)[1], digits = 2), 
+              b = format(coef(m)[2], digits = 2), 
+             r2 = format(summary(m)$r.squared, digits = 3)))
+    as.character(as.expression(eq));                 
+}
+# plot(kmeans_parts$treelength, kmeans_parts$multiplier, pch = 19)
+# abline(lm(kmeans_parts$multiplier ~ kmeans_parts$treelength))
+
+ggplot(kmeans_parts, aes(x=treelength, y = multiplier)) + geom_point(color = 'black') + xlab("Tree length (assumed proportional to rate)") +  ylab(expression("Branch rate multiplier")) + geom_smooth(method = 'lm', size = 0.5, color = 'black') + annotate("text", x = 30, y = 5, label = lm_eqn(kmeans_parts), parse = TRUE)
+```
+
+Step 17: bivariate plots showing the relationships among the three variables:
+
+```{r, echo = FALSE}
+par(oma = c(0, 0, 2, 0))
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+plot(kmeans_parts$bipartition, kmeans_parts$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Tree length vs. bipartition support", col = "lightcoral")
+abline(lm(kmeans_parts$treelength ~ kmeans_parts$bipartition))
+plot(kmeans_parts$bipartition, kmeans_parts$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Clockiness vs. bipartition support", col = "greenyellow")
+abline(lm(kmeans_parts$root.to.tip_var ~ kmeans_parts$bipartition))
+plot(kmeans_parts$root.to.tip_var, kmeans_parts$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Tree length vs. clockiness", col = "cornflowerblue")
+abline(lm(kmeans_parts$treelength ~ kmeans_parts$root.to.tip_var))
+mtext("36 k-means partitions", outer = TRUE, cex = 1.5)
+```
+
+Step 18: if you take the 10 partitions with the highest bipartition support, what will be the lowest bipartition score still included in the subset?
+
+```{r}
+kmeans_parts <- kmeans_parts[order(-kmeans_parts$bipartition),]
+kmeans_parts$bipartition[10]
+```
+
+Step 19: if you keep adding partitions until the total length reaches that of the 138-locus alignment created in track 3 (see below), what will be the lowest bipartition score still included in the subset?
+
+```{r}
+totallength <- 0
+for (i in 1:nrow(kmeans_parts)) {
+  totallength <- totallength + kmeans_parts$No_sites[i]
+  if (totallength >= 114462) {                         # see step 16 of track 3
+    print(kmeans_parts$bipartition[i])
+    break
+  }
+}
+```
+
+
+
+
 
 # Track 2: SortaDate on 150-bp chunks
 
@@ -455,6 +575,52 @@ abline(lm(gg_pelagia_colchunks$treelength ~ gg_pelagia_colchunks$root.to.tip_var
 mtext("558 chunks (no nodes w/ SH-like < 0.9)", outer = TRUE, cex = 1.5)
 ```
 
+Step 20: calculate chunk lengths using the following script:
+
+```{r, eval = FALSE}
+args <- commandArgs(trailingOnly = TRUE)
+a <- read.table(paste("/Users/David/Grive/Alfaro_Lab/Pelagia/Chunks/", args, sep = ""), header = FALSE, stringsAsFactors = FALSE)
+cat(c(paste(strsplit(args, ".", fixed = TRUE)[[1]][1], ".tre", sep = ""), nchar(a[2,])), "\n")
+```
+
+```
+for file in *fasta; do Rscript chunklengthcounter.R "$file" ; done > /Users/David/Grive/Alfaro_Lab/Pelagia/chunklengths.txt
+```
+
+Step 21: merge this info with the list of bipartition support scores:
+
+```{r}
+comb_chunks <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-chunks", 
+                          header = TRUE)
+colnames(comb_chunks) <- c("Locus", "Root_to_tip_variance", "Tree_length", "Bipartition_support")
+chunk_lengths <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/chunklengths.txt")
+colnames(chunk_lengths) <- c("Locus", "Length")
+allchunkinfo <- merge(comb_chunks, chunk_lengths, by = "Locus")
+```
+
+Step 22: sort chunks by bipartition support from highest to lowest; keep adding them until the total length reaches that of the 138-locus alignment created in track 3 (see below); then check the bipartition support value that you end up with:
+
+```{r}
+allchunkinfo <- allchunkinfo[order(-allchunkinfo$Bipartition_support),] 
+totallength <- 0
+for (i in 1:nrow(allchunkinfo)) {
+  totallength <- totallength + allchunkinfo$Length[i]
+  if (totallength >= 114462) {                         # see step 16 of track 3
+    print(allchunkinfo$Bipartition_support[i])
+    break
+  }
+}
+```
+
+
+
+
+
+
+
+
+
+
 # Track 3: SortaDate on loci
 
 Step 1: get_good_genes
@@ -597,7 +763,172 @@ phyluce_align_format_nexus_files_for_raxml \
 
 The total length of the concatenated file is 114,462 bp.
 
-Step 17: run PartitionFinder on the following configuration file using the command below:
+## Subtrack 3.1
+
+Run the PhyloBayes model comparison ("autocorrelation test") on each of the 138 loci. To do this, the variance-covariance matrix for branch lengths needs to be computed using the `estbranches` program from the `multidistribute` package, which in turn requires a `baseml` estimate of the substitution model parameters. To perform this on the desired scale, the following script was used to generate `baseml` configuration files:
+
+Step 1: convert the alignments from Nexus to Phylip (Geneious -> Batch export).
+
+Step 2: in `baseml`, the guide tree must contain only those taxa that are also present in the alignment. Since not all alignments contain the full set of taxa present in the tree, the corresponding trees inferred using RAxML were copied into the same directory:
+
+```
+for file in `cat highest-bipart-support-trees.txt`; do cp "$file" /Users/David/Grive/Alfaro_Lab/Pelagia/138_loci/ ; done
+```
+
+Step 3: reformat the trees to strip them of branch length and node support information (which confuses `baseml`):
+
+```
+for file in *.tre; do gsed -i 's/[0-9]*\.[0-9]*//g' "$file" ; done
+for file in *.tre; do gsed -i 's/:e-06//g' "$file" ; done
+for file in *.tre; do gsed -i 's/:e-05//g' "$file" ; done
+for file in *.tre; do gsed -i 's/:e-07//g' "$file" ; done
+for file in *.tre; do gsed -i 's/://g' "$file" ; done
+for file in *.tre; do gsed -i 's/)0)/))/g' "$file" ; done
+for file in *.tre; do gsed -i 's/)1)/))/g' "$file" ; done
+for file in *.tre; do gsed -i 's/)0,/),/g' "$file" ; done
+for file in *.tre; do gsed -i 's/)1,/),/g' "$file" ; done
+```
+
+Step 4: run the following script to generate `baseml` configuration files for each locus:
+
+```{r, eval = FALSE}
+args <- commandArgs(trailingOnly = TRUE)
+uce_name <- strsplit(args, ".", fixed = TRUE)[[1]][1]
+
+seqfile <- paste("      seqfile = ", args, " * sequence data file name", sep = "")
+outfile <- paste("      outfile = ", uce_name, " * main result file", sep = "")
+treefile <- paste("     treefile = ", uce_name, ".tre * tree structure file name", sep = "")
+rest <- paste("                                                                       ",
+"        noisy = 3   * 0,1,2,3: how much rubbish on the screen",
+"      verbose = 1   * 1: detailed output, 0: concise output",
+"      runmode = 0   * 0: user tree; 1: semi-automatic; 2: automatic",
+"                    * 3: StepwiseAddition; (4,5):PerturbationNNI",
+"                                                                ",
+"        model = 3   * 0:JC69, 1:K80, 2:F81, 3:F84, 4:HKY85",
+"                    * 5:T92, 6:TN93, 7:REV, 8:UNREST, 9:REVu; 10:UNRESTu",
+"        Mgene = 0   * 0:rates, 1:separate; 2:diff pi, 3:diff kapa, 4:all diff",
+"                                                                             ",
+"        ndata = 1   * number of data sets",
+"        clock = 1   * 0:no clock, 1:clock; 2:local clock; 3:CombinedAnalysis",
+"                                                                            ",
+"    fix_alpha = 0   * 0: estimate alpha; 1: fix alpha at value below",
+"        alpha = 0.1   * initial or fixed alpha, 0:infinity (constant rate)",
+"       Malpha = 0   * 1: different alpha's for genes, 0: one alpha",
+"        ncatG = 8   * # of categories in the dG, AdG, or nparK models of rates",
+"                                                                              ",
+"      fix_rho = 1   * 0: estimate rho; 1: fix rho at value below", 
+"          rho = 0   * initial or fixed rho, 0:no correlation",
+"        nparK = 0   * rate-class models. 1:rK, 2:rK&fK, 3:rK&MK(1/K), 4:rK&MK",
+"                                                                             ",
+"        nhomo = 1   * 0 & 1: homogeneous, 2: kappa for branches, 3: N1, 4: N2",
+"        getSE = 0   * 0: don't want them, 1: want S.E.s of estimates",
+"                                                                    ",
+" RateAncestor = 0   * (0,1,2): rates (alpha>0) or ancestral states",
+"                                                                  ",
+"   Small_Diff = 1e-6",
+"       method = 0   * 0: simultaneous; 1: one branch at a time", sep = "\n")
+write.table(rbind(seqfile, outfile, rest), paste("/Users/David/Grive/Alfaro_Lab/Pelagia/138_loci/", uce_name, ".ctl", sep = ""), row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+The F84 model was selected for all loci to ensure compatibility with `estbranches`.
+
+```
+for file in *.phy; do Rscript generatebasemlctl.R "$file" ; done
+```
+
+Step 5: reformat the Phylip alignments so that they are readable to PAML:
+
+```
+for file in *.phy; do gsed -i 's/ /  /g' "$file" ; done
+```
+
+Step 6: upload the files to the cluster and start the analysis:
+
+```
+ls *.{phy,tre,ctl} > tosync.txt
+rsync --files-from=/Users/David/Grive/Alfaro_Lab/Pelagia/138_loci/tosync.txt /Users/David/Grive/Alfaro_Lab/Pelagia/138_loci analysis@azathoth.eeb.ucla.edu:~/David/pelagiaPAML/138_loci
+baseml *.ctl
+```
+
+**Note:** For UCE 1118, `baseml` kept returning the following error:
+
+```
+Seq/species #1 (acanthocybium_solandri_95) occurs more than once in the tree
+```
+
+This was not the case; the tree merely contained two similarly named taxa ("acanthocybium_solandri_95" and "acanthocybium_solandri_95b") that were also present in all the other trees. The sequences of these taxa were not identical. Moreover, even changing the order of the two taxa in the tree, renaming one or both of them, or even deleting them did not solve the problem. Therefore, this locus was omitted from the analysis. The same approach was taken when the same error was encountered in analyzing UCEs 1199, 1239, and 1243.
+
+## Subtrack 3.2
+
+Step 1: rerun `phyluce` on the 138 loci to produce a concatenated alignment in the Nexus format:
+
+```
+phyluce_align_format_nexus_files_for_raxml \
+    --alignments 138_loci \
+    --output 138_loci_concat_nexus \
+    --nexus \
+    --charsets
+```
+
+Step 2: calculate the means of exponential node priors such that the 95th percentile equals the Hedman-based upper bound:
+
+```{r, echo = FALSE}
+aipichthys <- (143.01 - 98.0)/qexp(0.95)
+paste("Aipichthys", aipichthys, sep = " = ")
+anenchelum <- (65.16 - 41.2)/qexp(0.95)
+paste("Anenchelum", anenchelum, sep = " = ")
+argestichthys <- (75.14 - 54.17)/qexp(0.95)
+paste("Argestichthys", argestichthys, sep = " = ")
+ariomma <- (56.37 - 5.94)/qexp(0.95)
+paste("Ariomma", ariomma, sep = " = ")
+bannikovichthys <- (69.47 - 11.9)/qexp(0.95)
+paste("Bannikovichthys", bannikovichthys, sep = " = ")
+cretatriacanthus <- (98.08 - 69.71)/qexp(0.95)
+paste("Cretatriacanthus", cretatriacanthus, sep = " = ")
+eocoelopoma <- (67.61 - 54.17)/qexp(0.95)
+paste("Eocoelopoma", eocoelopoma, sep = " = ")
+gasterorhamphosus <- (98.08 - 69.71)/qexp(0.95)
+paste("Gasterorhamphosus", gasterorhamphosus, sep = " = ")
+hemithyristes <- (45.46 - 15.97)/qexp(0.95)
+paste("Hemithyristes", hemithyristes, sep = " = ")
+landanichthys <- (86.02 - 62.29)/qexp(0.95)
+paste("Landanichthys", landanichthys, sep = " = ")
+palaeocybium <- (61.68 - 50.5)/qexp(0.95)
+paste("Palaeocybium", palaeocybium, sep = " = ")
+pinichthys <- (71.9 - 32.02)/qexp(0.95)
+paste("Pinichthys", pinichthys, sep = " = ")
+scomber_colias <- (48.12 - 5.94)/qexp(0.95)
+paste("Scomber_colias", scomber_colias, sep = " = ")
+scomber_sadii <- (59.06 - 33.9)/qexp(0.95)
+paste("Scomber_sadii", scomber_sadii, sep = " = ")
+scomberomorus <- (53.29 - 15.1)/qexp(0.95)
+paste("Scomberomorus", scomberomorus, sep = " = ")
+stichocentrus <- (128.83 - 98)/qexp(0.95)
+paste("Stichocentrus", stichocentrus, sep = " = ")
+thrysitoides <- (56.17 - 33.9)/qexp(0.95)
+paste("Thrysitoides", thrysitoides, sep = " = ")
+thunnus <- (59.67 - 38.62)/qexp(0.95)
+paste("Thunnus", thunnus, sep = " = ")
+urosphenopsis <- (74.88 - 54.17)/qexp(0.95)
+paste("Urosphenopsis", urosphenopsis, sep = " = ")
+mene <- (84.67 - 55.2)/qexp(0.95)
+paste("Mene", mene, sep = " = ")
+```
+
+Step 3: create a BEAST 1.8 XML file with the following settins:
+
+- substitution models: a separate GTR+$\Gamma$ model with estimated base frequencies and 4 discrete rate categories for each of the 138 loci/partitions
+- node priors: see above, plus a truncated exponential root prior from 98 to 143 Ma with the mean at the midpoint (22.5)
+- `ucld.mean` prior: lognormal, mean = 0.005 in real space, log(st. dev.) = 1, initial value = 0.005
+- `ucld.stdev` prior: truncated exponential from 0 to 1, mean = 0.3, initial value = 0.1
+- `allMus` prior: gamma, shape = 0.001, scale = 1000, initial value = 1
+- `ucld.mean` operator: tuning = 0.9, weight = 6.0
+- `ucld.stdev` operator: tuning = 0.9, weight = 6.0
+- MCMC settings: 800 million generations, log every 1000 generations
+
+## Subtrack 3.3
+
+Step 1: run PartitionFinder on the following configuration file using the command below:
 
 ```{r comment='', echo = FALSE}
 cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/partition_finder.cfg"), sep = '\n')
@@ -606,6 +937,89 @@ cat(readLines("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/pa
 ```
 python PartitionFinder.py /home/analysis/partitionfinder-new/pelagia-138-loci/partition_finder.cfg --verbose --raxml --save-phylofiles
 ```
+
+The algorithm finished after 118 steps with 21 final partitions. The respective charsets were extracted from the `best_scheme` file and plugged as data blocks into a new round of partitioning. However, the second analysis was unable to improve on the results of the first, and did not cluster the 21 partitions any further.
+
+Step 2: prepare a list of alignments and information files to download:
+
+```{r}
+new_partitions <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/partitions.txt", sep = "|", header = TRUE, stringsAsFactors = FALSE, strip.white = TRUE)
+new_alignments <- paste(gsub(" ", "", new_partitions[,4], fixed = TRUE), ".phy", sep = "")
+infofiles <- paste("RAxML_info.", gsub(" ", "", new_partitions[,4], fixed = TRUE), "_GTR+G.txt", sep = "")
+```
+```{r, eval = FALSE}
+write(cbind(new_alignments, infofiles), "/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/whattorsync.txt")
+```
+
+Step 3: convert the partition alignments from Phylip to FASTA (Geneious -> Batch export) and infer partition trees using RAxML:
+
+```{r}
+args <- commandArgs(trailingOnly = TRUE)
+
+commandpart1 <- paste("ete3 build -w standard_raxml -n /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/Partitions/", args, sep = "")
+commandpart2 <- paste(" -o /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/Partitions/", args, sep="")
+wholecommand <- paste(commandpart1, commandpart2, "-tree", sep = "")
+```
+```{r, eval = FALSE}
+write(wholecommand, "/Users/David/Grive/Alfaro_Lab/Pelagia/21-pfinder-partition-analysis.sh")
+```
+
+Step 4: extract the 21 trees from their subdirectories and SortaDate them:
+
+```
+find . -name '*.nw' -exec mv {} . \;
+find . -name "*.fasta.final_tree.nw" -exec rename 's/.fasta.final_tree.nw$/.tre/' {} \;
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_var_length.py /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/Partitions --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-21-partitions --outg ceratoscopelus_warmingii,gadus_morhua
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_bp_genetrees.py /Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/Partitions /Users/David/Grive/Alfaro_Lab/Pelagia/ExaML_pelagia-75p.tre --flend .tre --outf /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-21-partitions
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/combine_results.py /Users/David/Grive/Alfaro_Lab/Pelagia/var-pelagia-21-partitions /Users/David/Grive/Alfaro_Lab/Pelagia/bp-pelagia-21-partitions --outf /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-21-partitions
+```
+
+Step 5: does tree length (estimated by SortaDate) correlate with branch rate multipliers (estimated by PartitionFinder)?
+
+```{r, echo = FALSE}
+library(ggplot2)
+
+new_multipliers <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/PartitionFinder/138_loci/multipliers.txt")
+partitions <- cbind(new_partitions, new_multipliers)
+colnames(partitions)[4] <- "name"
+colnames(partitions)[6] <- "multiplier"
+sortadated_partitions <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-21-partitions", header = TRUE, stringsAsFactors = FALSE)
+colnames(sortadated_partitions) <- c("name", "root.to.tip_var", "treelength", "bipartition")
+sortadated_partitions <- merge(sortadated_partitions, partitions, by = "name")
+
+ggplot(sortadated_partitions, aes(x=treelength, y = multiplier)) + geom_point(color = 'black') + xlab("Tree length (assumed proportional to rate)") +  ylab(expression("Branch rate multiplier")) + geom_smooth(method = 'lm', size = 0.5, color = 'black') + annotate("text", x = 10, y = 1.75, label = lm_eqn(sortadated_partitions), parse = TRUE)
+```
+
+Step 6: bivariate plots showing the relationships among the three variables:
+
+```{r, echo = FALSE}
+par(oma = c(0, 0, 2, 0))
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+plot(sortadated_partitions$bipartition, sortadated_partitions$treelength, xlab = "Bipartition support", ylab = "Tree length", main = "Tree length vs. bipartition support", col = "lightcoral")
+abline(lm(sortadated_partitions$treelength ~ sortadated_partitions$bipartition))
+plot(sortadated_partitions$bipartition, sortadated_partitions$root.to.tip_var, xlab = "Bipartition support", ylab = "Root-to-tip variance", main = "Clockiness vs. bipartition support", col = "greenyellow")
+abline(lm(sortadated_partitions$root.to.tip_var ~ sortadated_partitions$bipartition))
+plot(sortadated_partitions$root.to.tip_var, sortadated_partitions$treelength, xlab = "Root-to-tip variance", ylab = "Tree length", main = "Tree length vs. clockiness", col = "cornflowerblue")
+abline(lm(sortadated_partitions$treelength ~ sortadated_partitions$root.to.tip_var))
+mtext("21 pfinder partitions of the 138-locus alignment", outer = TRUE, cex = 1.5)
+```
+
+Step 7: select the 10 best partitions
+
+```
+python /Users/David/Grive/Alfaro_Lab/SortaDate/src/get_good_genes.py /Users/David/Grive/Alfaro_Lab/Pelagia/comb-pelagia-21-partitions --max 10 --order 3,1,2 --outf /Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-21-partitions
+```
+
+Step 8: how many basepairs does this selection account for?
+
+```{r, echo = FALSE}
+best_10_part <- read.table("/Users/David/Grive/Alfaro_Lab/Pelagia/gg-pelagia-21-partitions", header = TRUE)
+sum(sortadated_partitions[paste(sortadated_partitions$name, ".phy.tre", sep = "") %in% best_10_part$name, 7])
+```
+
+
+
+
 
 # MCMCTree concatenated analysis (615 loci, unpartitioned)
 
